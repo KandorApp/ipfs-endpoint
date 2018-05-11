@@ -14,25 +14,28 @@ const upload = multer({ storage: storage })
 
 const hashCounterFilename = __dirname + '/hashCounter.json'
 
+var keyMap = {}; // map keyHash to ipfsHash
+
 const app = express()
 app.use(helmet())
 
 app.get('/ipfs/:hash', (req, res, next) => {
 
-    checkRateLimit(req.params.hash)
+    const ipfsHash = keyMap[hash]
+    checkRateLimit(ipfsHash)
         .then(isRateLimitReached => {
             if (!isRateLimitReached) {
                 return res.status(403).json({ error: 'Rate limit reached. The resource is not anymore available' })
             }
-            ipfs.files.cat(req.params.hash, (err, data) => {
+            ipfs.files.cat(ipfsHash, (err, data) => {
                 if (err) {
                     return res.status(500).json({ error: util.format(err) })
                 }
 
-                decrementAllowedDownloads(req.params.hash)
+                decrementAllowedDownloads(ipfsHash)
                     .then(() => {
                         res.setHeader('Content-Type', 'application/octet-stream')
-                        res.setHeader('Content-Disposition', 'attachment; filename='+req.params.hash)
+                        res.setHeader('Content-Disposition', 'attachment; filename='+ipfsHash)
                         res.send(data)
                     })
                     .catch(err => res.status(500).json({ error: util.format(err) }))
@@ -60,12 +63,19 @@ app.post('/ipfs', (req, res) => {
         ipfs.files.add(req.file.buffer)
             .then(result => {
                 const ipfsResponse = result[0]
+                })
                 storeHashCounter(ipfsResponse.hash, req.body.rateLimit)
-                    .then(() => res.json({ 
-                        hash: ipfsResponse.hash, 
+                    .then(() => res.json({
+                        hash: ipfsResponse.hash,
                         size: ipfsResponse.size,
-                        rateLimit: req.body.rateLimit
-                    }))
+                        rateLimit: req.body.rateLimit,
+                        keyHash: req.body.keyHash
+                    })
+                    console.log(ipfsResonse)
+                    console.log(res.body.keyHash)
+                    keyMap[res.body.keyHash] = ipfsResponse.hash
+
+                    )
                     .catch(err => res.status(500).json({ error: util.format(err) }))
             })
             .catch(err => res.status(500).json({ error: util.format(err) }))
@@ -103,7 +113,7 @@ function decrementAllowedDownloads(hash) {
                 writeCounterOnFile(hashCounterData)
                     .then(resolve)
                     .catch(reject)
-            } 
+            }
             else {
                 resolve()
             }
