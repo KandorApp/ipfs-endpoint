@@ -1,3 +1,4 @@
+
 const util = require('util')
 const fs = require('fs')
 
@@ -8,34 +9,60 @@ const multer  = require('multer')
 const helmet = require('helmet')
 
 dotenv.load()
+
+let codeToHashMap = new Map();
+let codeToDigestMap = new Map();
+var ipfsLocation = ""
+
 const ipfs = ipfsApi(process.env.IPFS_NODE_HOST, process.env.IPFS_NODE_PORT, { protocol: 'http' })
 const storage = multer.memoryStorage()
 const upload = multer({ storage: storage })
 
 const hashCounterFilename = __dirname + '/hashCounter.json'
 
-var keyMap = {}; // map keyHash to ipfsHash
-
 const app = express()
 app.use(helmet())
 
 app.get('/ipfs/:hash', (req, res, next) => {
+    console.log(codeToHashMap)
+    var ipfsLocation = ""
+    var digest       = ""
+    let hash = req.params.hash
+    console.log("hash", hash)
+    if (hash.charAt(0) != "Q") {
+      ipfsLocation = codeToHashMap.get(hash)
+      digest       = codeToDigestMap.get(hash)
+    } else {
+      ipfsLocation = hash
+    };
 
-    const ipfsHash = keyMap[hash]
-    checkRateLimit(ipfsHash)
+
+
+    console.log("hash", hash)
+       if (hash.charAt(0) != "Q") {
+         ipfsLocation = codeToHashMap.get(hash)
+         digest       = codeToDigestMap.get(hash)
+       } else {
+         ipfsLocation = hash
+       };
+
+
+    console.log("cTHP.get(hash)", codeToHashMap.get(hash))
+    console.log("ipfsLocation", ipfsLocation)
+    checkRateLimit(ipfsLocation)
         .then(isRateLimitReached => {
             if (!isRateLimitReached) {
                 return res.status(403).json({ error: 'Rate limit reached. The resource is not anymore available' })
             }
-            ipfs.files.cat(ipfsHash, (err, data) => {
+            ipfs.files.cat(ipfsLocation, (err, data) => {
                 if (err) {
                     return res.status(500).json({ error: util.format(err) })
                 }
 
-                decrementAllowedDownloads(ipfsHash)
+                decrementAllowedDownloads(ipfsLocation)
                     .then(() => {
                         res.setHeader('Content-Type', 'application/octet-stream')
-                        res.setHeader('Content-Disposition', 'attachment; filename='+ipfsHash)
+                        res.setHeader('Content-Disposition', 'attachment; filename='+ipfsLocation)
                         res.send(data)
                     })
                     .catch(err => res.status(500).json({ error: util.format(err) }))
@@ -44,6 +71,7 @@ app.get('/ipfs/:hash', (req, res, next) => {
         })
         .catch(err => res.status(500).json({ error: util.format(err) }))
 })
+
 
 const uploadFile = upload.single('file')
 
@@ -62,20 +90,18 @@ app.post('/ipfs', (req, res) => {
 
         ipfs.files.add(req.file.buffer)
             .then(result => {
-                const ipfsResponse = result[0]
-                })
+                const ipfsResponse = result[0];
+                codeToHashMap.set(req.body.keyCode, ipfsResponse.hash)
+                codeToDigestMap.set(req.body.keyCode, req.body.digest)
+                console.log(codeToHashMap)
                 storeHashCounter(ipfsResponse.hash, req.body.rateLimit)
                     .then(() => res.json({
                         hash: ipfsResponse.hash,
                         size: ipfsResponse.size,
+                        digest: req.body.digest,
                         rateLimit: req.body.rateLimit,
-                        keyHash: req.body.keyHash
-                    })
-                    console.log(ipfsResonse)
-                    console.log(res.body.keyHash)
-                    keyMap[res.body.keyHash] = ipfsResponse.hash
-
-                    )
+                        keyCode: req.body.keyCode
+                    }))
                     .catch(err => res.status(500).json({ error: util.format(err) }))
             })
             .catch(err => res.status(500).json({ error: util.format(err) }))
@@ -100,6 +126,7 @@ function checkRateLimit(hash) {
         })
     })
 }
+
 
 function decrementAllowedDownloads(hash) {
     return new Promise((resolve, reject) => {
